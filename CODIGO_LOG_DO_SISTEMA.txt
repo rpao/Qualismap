@@ -1,0 +1,10 @@
+LOG do sistema
+
+MPU
+00 - inicializacao do sistema
+01 - inicalizacao de comunicacao com mpu
+02
+03
+04
+05
+06
