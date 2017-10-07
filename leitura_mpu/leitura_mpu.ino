@@ -55,9 +55,12 @@ void imprime_mpu(int AcX,int AcY,int AcZ,int Tmp,int GyX,int GyY); // imprimir d
 
 //Variaveis para armazenar valores dos sensores
 int AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
+int referencial[7] = {0,0,0,0,0,0,0};
 int status_transmission = 1;
+int set_referencial = 1;
 int qualidade = 0;
 int error;
+int leitura = 0;
 
 void setup(){
   int cont_try = 0;
@@ -104,9 +107,8 @@ void setup(){
   }
 }
 
-void loop(){
-  if(status_transmission != 0){
-       
+void loop(){  
+  if(status_transmission != 0){      
     Wire.beginTransmission(MPU);    // transmite para MPU
     Wire.write(0x3B);               // começa com o registrador 0x3B (ACCEL_XOUT_H)
     error = Wire.endTransmission(false);    // finalisa transmissao
@@ -120,7 +122,7 @@ void loop(){
       //print_log(MPU_TRANSMISSION_SUCCESS, TRANSMISSION_MPU_LOG);
       
       Wire.requestFrom(MPU,14,true);  //Solicita os dados do sensor
-      
+     
       //Armazena o valor dos sensores nas variaveis correspondentes
       AcX=Wire.read()<<8|Wire.read();  //0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)     
       AcY=Wire.read()<<8|Wire.read();  //0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
@@ -128,16 +130,38 @@ void loop(){
       Tmp=Wire.read()<<8|Wire.read();  //0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
       GyX=Wire.read()<<8|Wire.read();  //0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
       GyY=Wire.read()<<8|Wire.read();  //0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
-      GyZ=Wire.read()<<8|Wire.read();  //0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)  
+      GyZ=Wire.read()<<8|Wire.read();  //0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)      
 
-      imprime_mpu(AcX,AcY,AcZ,Tmp,GyX,GyY); // imprime dados obtidos do MPU
+      if (set_referencial == 1){
+        referencial[0] = AcX;     
+        referencial[1] = AcY;
+        referencial[2] = AcZ;
+        referencial[3] = Tmp;
+        referencial[4] = GyX;
+        referencial[5] = GyY;
+        referencial[6] = GyZ;
+               
+        set_referencial = 0;
+      }
 
-      double angle_ac =(180/3.14)*atan2(AcY,sqrt(AcX*AcX+AcZ*AcZ));
-      double angle_gy = (180/3.14)*atan2(GyY,sqrt(GyX*GyX+GyZ*GyZ));
-      
-      Serial.print("Angulo Acelerometro (graus): "); Serial.println((int)angle_ac);
-      Serial.print("Angulo Giroscopio (graus): "); Serial.println((int)angle_gy);
-      
+      AcX -= referencial[0];     
+      AcY -= referencial[1];
+      AcZ -= referencial[2];
+      Tmp -= referencial[3];
+      GyX -= referencial[4];
+      GyY -= referencial[5];
+      GyZ -= referencial[6];
+
+      //imprime_mpu(AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ); // imprime dados obtidos do MPU
+
+      int roll = pitch_roll(AcX, AcY, AcZ);
+      int pitch = pitch_roll(AcY, AcX, AcZ);
+      int yaw = pitch_roll(AcZ, AcX, AcY);
+
+      Serial.print(roll);
+      Serial.print(","); Serial.print(pitch);
+      Serial.print(","); Serial.println(yaw);
+
       //apagar o led
       digitalWrite (13, HIGH); // set o LED
       delay(1000);
@@ -147,19 +171,19 @@ void loop(){
   }
 }
 
-void imprime_mpu(int AcX,int AcY,int AcZ,int Tmp,int GyX,int GyY){
+void imprime_mpu(int AcX,int AcY,int AcZ,int Tmp,int GyX,int GyY, int GyZ){
   //Imprime valores X, Y, Z do acelerometro
-  Serial.print("AcX = "); Serial.print(AcX);
-  Serial.print(" AcY = "); Serial.print(AcY);
-  Serial.print(" AcZ = "); Serial.print(AcZ);
+  Serial.print(AcX);
+  Serial.print(" | "); Serial.print(AcY);
+  Serial.print(" | "); Serial.print(AcZ);
   
   //Imprime valor da temperatura -- Calcula a temperatura em graus Celsius
-  Serial.print(" Tmp = "); Serial.print(Tmp/340.00+36.53);
+  Serial.print(" | "); Serial.print(Tmp/340.00+36.53);
   
   //Imprime valores X, Y, Z do giroscopio
-  Serial.print(" GyX = "); Serial.print(GyX);
-  Serial.print(" GyY = "); Serial.print(GyY);
-  Serial.print(" GyZ = "); Serial.println(GyZ);
+  Serial.print(" | "); Serial.print(GyX);
+  Serial.print(" | "); Serial.print(GyY);
+  Serial.print(" | "); Serial.println(GyZ);
 }
 
 int get_mpu_log(int error){  
@@ -176,4 +200,16 @@ int get_mpu_log(int error){
 
 void print_log(int log_id, int origem, int data_gps){
   Serial.print("LOG: "); Serial.print(data_gps); Serial.print(" - "); Serial.print(origem); Serial.print(" - "); Serial.println(log_id);
+}
+
+double pitch_roll(double A, double B, double C){
+  double DatoA, DatoB, Value;
+  DatoA = A;
+  DatoB = (B*B) + (C*C);
+  DatoB = sqrt(DatoB);
+  
+  Value = atan2(DatoA, DatoB);
+  Value = Value * 180/3.14;
+  
+  return (int)Value;
 }
