@@ -21,10 +21,16 @@
 #include <TinyGPS.h>
 #include <SoftwareSerial.h>
 
+#define SUCESSO 0
+#define FALHA 1
+#define STOP 2
+
 #define MPU 0x68        //Endereco I2C do MPU6050
 #define PWR_MGMT_1 0x6B //PWR_MGMT_1 register
 #define AWAKE 0         //Tira do sleep mode  
-#define SLEEP 1         //Coloca no sleep mode  
+#define SLEEP 1         //Coloca no sleep mode
+#define ON 1            //Resetar o sistema
+#define OFF 0           //Desligar o sistema
 
 // Codigos de origem do log de sistema
 #define SETUP_LOG     0           //Define log de setup (geral)
@@ -44,23 +50,26 @@
 #define MPU_UNKNOW_ERROR 7         // erro desconhecido
 #define MPU_TRANSMISSION_SUCCESS 8 // transmissao bem sucedida
 #define MPU_TRANSMISSION_ERROR  9  // transmissao mal sucedida
+#define TEMP_HIGH  10               // temperatura do sistema está elevada
 
-SoftwareSerial mySerial(10, 11);
-TinyGPS gps;
+//Funçoes do sistema para MPU
+int get_log(int error);                                   // transformaçao do codigo de erro da MPU para o codigo de log
+void send_log(int log_id, int origem, int data_gps = 0);  // imprime o log do sistema
+void send_leitura();                                      // imprimir dados do sensor mpu
+void set_referencial(int set);                            // inicializa o ponto referencial de nível
+void teste_nivel_acelerometro();                                        // testa magnitude da variaçao lida
 
-//Funçoes do sistema
-int get_log(int error); // transformaçao do codigo de erro da MPU para o codigo de log
-void print_log(int log_id, int origem, int data_gps = 0); // imprime o log do sistema
-void imprime_mpu(int AcX,int AcY,int AcZ,int Tmp,int GyX,int GyY); // imprimir dados do sensor mpu
+// Funçoes gerais
+void turn_system(int mode = ON);
 
-//Variaveis para armazenar valores dos sensores
+//Variaveis para armazenar valores dos sensores (MPU)
 int AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
-int referencial[7] = {0,0,0,0,0,0,0};
-int status_transmission = 1;
-int set_referencial = 1;
-int qualidade = 0;
-int error;
-int leitura = 0;
+
+//Variáveis auxiliares
+int referencial[7] = {0,0,0,0,0,0,0}; //ponto de referencia (primeira leitura)
+int nivel[3] = {0,0,0};               //variaçao entre leituras
+int status_transmissao = 1;           //se é possível transmitir
+int status_set_referencial = ON;      //se deve resetar o referencial
 
 void setup(){
   int cont_try = 0;
@@ -71,55 +80,62 @@ void setup(){
   pinMode (11, OUTPUT); // Pin 13 tem um LED conectado (piscando indica que leituras estao sendo feitas, sem piscar indica erro)
   
   digitalWrite (13, HIGH); // set o LED verde
-  digitalWrite (11, HIGH);  // reset LED vermelho
+  digitalWrite (11, HIGH); // reset LED vermelho
+  delay(1000);             // 1 segundo de espera
 
-  delay(2000);
-
-  //print_log(INIT_SISTEM, SETUP_LOG);
+  //send_log(INIT_SISTEM, SETUP_LOG);
     
-  do{   
-    //Inicializa o MPU-6050
-    //print_log(MPU_INIT, INIT_MPU_LOG);
+  do{
     
+    //send_log(MPU_INIT, INIT_MPU_LOG);
+    
+    //Inicializa o MPU-6050    
     Wire.begin();                 // inicia I2C
     Wire.beginTransmission(MPU);  // inicia transmissao para o endereço do MPU
     Wire.write(PWR_MGMT_1);       // PWR_MGMT_1 register
     Wire.write(AWAKE);            // Inicializa o MPU-6050  
-
-    error = Wire.endTransmission(true); // fecha a transmissao para o endereço do MPU
-    if (error != 0){
-      status_transmission = 0;
-      //print_log(get_mpu_log(error), INIT_MPU_LOG);
-      cont_try++;
-      digitalWrite (13, LOW);   // reset o LED verde      
-      delay(5000);
-    }else{
-       status_transmission = 1;
-    }
-  }while (status_transmission == 0 && cont_try < 5);
+    status_transmissao = Wire.endTransmission(true);       // fecha a transmissao para o endereço do MPU
     
-  if (status_transmission == 0){ // sucesso
-    //print_log(MPU_ERROR_INIT, INIT_MPU_LOG);
-    digitalWrite (13, LOW);  // reset o LED verde
-    digitalWrite (11, LOW);  // reset LED vermelho
-  }else{ //erro
-    //print_log(MPU_SUCCESS_INIT, INIT_MPU_LOG);
+    if (status_transmissao != SUCESSO){                       // teste de erro na transmissao
+      //send_log(get_mpu_log(status_transmissao),INIT_MPU_LOG); // utiliza o código enviado pela UNO para obter o código correspondente
+      cont_try++;                                         // contagem de tentativas de transmissao
+      
+      status_transmissao = FALHA;                             // se houve erro, nao houve transmissao
+      
+      digitalWrite (13, LOW);                             // reset o LED verde (mantem o vermelho setado)
+      delay(5000);                                        // 5 segundos de espera
+      
+    } else {
+       status_transmissao = SUCESSO;                          // transmissao foi realizada com sucesso
+    }
+  }while (status_transmissao == FALHA && cont_try < 5);       //tenta sempre que a transmissao falhou e foram feitas menos de 5 tentativas
+   
+  if (status_transmissao == SUCESSO){
+    //send_log(MPU_ERROR_INIT, INIT_MPU_LOG);
+    digitalWrite (13, LOW);                               // reset o LED verde
+    digitalWrite (11, LOW);                               // reset LED vermelho
+  }else{                                                  //erro
+    //send_log(MPU_SUCCESS_INIT, INIT_MPU_LOG);
   }
 }
 
 void loop(){  
-  if(status_transmission != 0){      
+  if(status_transmissao == SUCESSO){
+
     Wire.beginTransmission(MPU);    // transmite para MPU
     Wire.write(0x3B);               // começa com o registrador 0x3B (ACCEL_XOUT_H)
-    error = Wire.endTransmission(false);    // finalisa transmissao
-    if (error != 0){
-      //print_log(get_mpu_log(error), TRANSMISSION_MPU_LOG);
+    status_transmissao = Wire.endTransmission(false);    // finalisa transmissao
+    
+    if (status_transmissao != SUCESSO){
+      //send_log(get_mpu_log(status_transmissao), TRANSMISSION_MPU_LOG);
+      
       digitalWrite (11, HIGH);  // set LED vermelho
       delay(5000);
+      
     }else{
       digitalWrite (11, LOW);  // reset LED vermelho
            
-      //print_log(MPU_TRANSMISSION_SUCCESS, TRANSMISSION_MPU_LOG);
+      //send_log(MPU_TRANSMISSION_SUCCESS, TRANSMISSION_MPU_LOG);
       
       Wire.requestFrom(MPU,14,true);  //Solicita os dados do sensor
      
@@ -132,17 +148,12 @@ void loop(){
       GyY=Wire.read()<<8|Wire.read();  //0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
       GyZ=Wire.read()<<8|Wire.read();  //0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)      
 
-      if (set_referencial == 1){
-        referencial[0] = AcX;     
-        referencial[1] = AcY;
-        referencial[2] = AcZ;
-        referencial[3] = Tmp;
-        referencial[4] = GyX;
-        referencial[5] = GyY;
-        referencial[6] = GyZ;
-               
-        set_referencial = 0;
+      if ((Tmp/340.00+36.53) > 50){
+        //send_log(TEMP_HIGH, TRANSMISSION_MPU_LOG);
+        turn_system(OFF);
       }
+
+      set_referencial(status_set_referencial);
 
       AcX -= referencial[0];     
       AcY -= referencial[1];
@@ -152,38 +163,24 @@ void loop(){
       GyY -= referencial[5];
       GyZ -= referencial[6];
 
-      //imprime_mpu(AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ); // imprime dados obtidos do MPU
+      teste_nivel_acelerometro();
 
-      int roll = pitch_roll(AcX, AcY, AcZ);
-      int pitch = pitch_roll(AcY, AcX, AcZ);
-      int yaw = pitch_roll(AcZ, AcX, AcY);
-
-      Serial.print(roll);
-      Serial.print(","); Serial.print(pitch);
-      Serial.print(","); Serial.println(yaw);
+      send_leitura(); // imprime dados obtidos do MPU
 
       //apagar o led
       digitalWrite (13, HIGH); // set o LED
-      delay(1000);
+      delay(5);//1000);
       digitalWrite (13, LOW); // set o LED
-      delay(4000);
+      delay(5);//4000);
     }  
+    
+  }else{
+    
   }
 }
 
-void imprime_mpu(int AcX,int AcY,int AcZ,int Tmp,int GyX,int GyY, int GyZ){
-  //Imprime valores X, Y, Z do acelerometro
-  Serial.print(AcX);
-  Serial.print(" | "); Serial.print(AcY);
-  Serial.print(" | "); Serial.print(AcZ);
-  
-  //Imprime valor da temperatura -- Calcula a temperatura em graus Celsius
-  Serial.print(" | "); Serial.print(Tmp/340.00+36.53);
-  
-  //Imprime valores X, Y, Z do giroscopio
-  Serial.print(" | "); Serial.print(GyX);
-  Serial.print(" | "); Serial.print(GyY);
-  Serial.print(" | "); Serial.println(GyZ);
+void send_leitura(){
+  Serial.print(nivel[0]); Serial.print(","); Serial.print(nivel[1]);Serial.print(","); Serial.println(nivel[2]);
 }
 
 int get_mpu_log(int error){  
@@ -198,18 +195,35 @@ int get_mpu_log(int error){
   }
 }
 
-void print_log(int log_id, int origem, int data_gps){
+void send_log(int log_id, int origem, int data_gps){
   Serial.print("LOG: "); Serial.print(data_gps); Serial.print(" - "); Serial.print(origem); Serial.print(" - "); Serial.println(log_id);
 }
 
-double pitch_roll(double A, double B, double C){
-  double DatoA, DatoB, Value;
-  DatoA = A;
-  DatoB = (B*B) + (C*C);
-  DatoB = sqrt(DatoB);
-  
-  Value = atan2(DatoA, DatoB);
-  Value = Value * 180/3.14;
-  
-  return (int)Value;
+void turn_system(int mode){
+  if (mode == OFF){
+    Serial.println("Desligar");
+  }else{
+    Serial.println("Reset");
+  }
+}
+
+void set_referencial(int set){
+  if (set == ON){
+        referencial[0] = AcX;     
+        referencial[1] = AcY;
+        referencial[2] = AcZ;
+        referencial[3] = Tmp;
+        referencial[4] = GyX;
+        referencial[5] = GyY;
+        referencial[6] = GyZ;
+               
+        status_set_referencial = OFF;
+      }
+}
+
+void teste_nivel_acelerometro(){
+  int i;
+  nivel[0] = AcX/100;
+  nivel[1] = AcY/1000;
+  nivel[2] = AcZ/1000;
 }

@@ -1,3 +1,4 @@
+
 DROP SCHEMA `qualismap`;
 
 CREATE SCHEMA `qualismap` ;
@@ -43,7 +44,30 @@ CREATE TABLE `qualismap`.`dados_local`(
 	latitude DOUBLE PRECISION(8,6),
 	longitude DOUBLE PRECISION(8,6),
 	data_hora TIMESTAMP,
+	temp NUMBER,
+	ac_x NUMBER,
+	ac_y NUMBER,
+	ac_z NUMBER,
+	gy_x NUMBER,
+	gy_y NUMBER,
+	gy_z NUMBER,
 	classificacao VARCHAR(2) NOT NULL,
-	CHECK (classificacao = 'RE' OR classificacao = 'PR' OR classificacao = 'NR'),
-	PRIMARY KEY (latitude, longitude)
 );
+
+/*
+drop table DADOS_LIDOS_QUALISMAP;
+
+create table DADOS_LIDOS_QUALISMAP(
+	LATITUDE number,
+	LONGITUDE number,
+	DATA_LEITURA date,
+	TEMP number,
+	AC_X number,
+	AC_Y number,
+	AC_Z number,
+	GY_X number,
+	GY_Y number,
+	GY_Z number,
+	PRIMARY KEY (LATITUDE, LONGITUDE, DATA_LEITURA)
+);
+*/

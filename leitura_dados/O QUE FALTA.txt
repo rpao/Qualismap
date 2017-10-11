@@ -1,0 +1,8 @@
+1 - comando para resetar o sistema
+2 - comando para desligar o sistema
+3 - GPS
+
+//      int roll = pitch_roll(AcX, AcY, AcZ);
+//      int pitch = pitch_roll(AcY, AcX, AcZ);
+//      int yaw = pitch_roll(AcZ, AcX, AcY);
+
